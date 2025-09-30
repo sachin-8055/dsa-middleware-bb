@@ -1,0 +1,6 @@
+> npm run build
+
+> npm link   # creates global symlink
+
+# in another project
+npm link dsa-middleware-bb
