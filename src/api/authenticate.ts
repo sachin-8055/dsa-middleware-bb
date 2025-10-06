@@ -13,24 +13,6 @@ let reportSyncFrequencyInMinutes = 1;
 
 const httpService = new HttpRequestService();
 
-function resolveLogFile(pattern: string): string {
-  return pattern.replace(/\{([^}]+)\}/g, (_, format) => {
-    return new Date().toISOString().slice(0, format.length); // simple placeholder resolution
-  });
-}
-
-function getRawFileName(fileName: string): string {
-  const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : "";
-  const withoutExt = ext ? fileName.slice(0, fileName.lastIndexOf(".")) : fileName;
-
-  const parts = withoutExt.split(".");
-  if (parts.length === 1) {
-    return parts[0] + "_raw" + ext;
-  }
-  parts[parts.length - 1] = parts[parts.length - 1] + "_raw";
-  return parts.join(".") + ext;
-}
-
 /**
  * Authenticate agent with server
  */
@@ -54,7 +36,7 @@ export async function authSync(): Promise<boolean> {
 
   try {
     const result = await httpService.postAsync<any>("authenticate", requestBody, true);
-    // console.warn(" >> Auth result:", result);
+    // console.warn(" >> Auth result:", result.resultData?.configurations);
 
     if (result?.resultData?.configurations) {
       reportService.addSync(true, "");

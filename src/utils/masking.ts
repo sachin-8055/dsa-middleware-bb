@@ -56,7 +56,6 @@ export function maskData(input: string, rule?: RegexMaskRules): string {
       for (const r of rules) {
         const regex = new RegExp(r.pattern || "", "gi");
         masked = masked.replace(regex, (match) => {
-          // console.log("🔒 match text :", match, " with rule:", r?.name);
           reportService.addRuleResult({
             name: r?.name || "Unknown",
             pattern: r?.pattern?.toString() || "Unknown",
@@ -65,7 +64,6 @@ export function maskData(input: string, rule?: RegexMaskRules): string {
             isEncrypt: false,
           });
           const newText = r.isFullMask ? maskFull(match, r.maskWith) : partialMask(match);
-          // console.log("🔒 masked text :", newText);
           return newText;
         });
       }
@@ -193,59 +191,60 @@ export async function maskDOCX(buffer: Buffer): Promise<Buffer> {
     return buffer;
   }
 
-  // Setup parser for order preservation and attributes
   const parser = new XMLParser({
     ignoreAttributes: false,
     preserveOrder: true,
   });
   const json = parser.parse(xmlFile);
 
-  // Recursive mask
-  function maskTextNodes(node: any) {
-    if (Array.isArray(node)) {
-      node.forEach(maskTextNodes);
-    } else if (node && typeof node === "object") {
+  // Recursive mask function
+  function maskNodes(nodes: any[]): void {
+    nodes.forEach((node) => {
+      if (!node || typeof node !== "object") return;
+
       for (const key of Object.keys(node)) {
+        const val = node[key];
+
         if (key === "w:t") {
-          // <w:t>Text</w:t> or <w:t>{#text:'Text'}</w:t>
-          if (typeof node[key] === "string") {
-            node[key] = maskData(node[key]);
-          } else if (Array.isArray(node[key])) {
-            node[key] = node[key].map((v) => {
-              if (typeof v === "string") return maskData(v);
-              if (v && typeof v["#text"] === "string") {
-                v["#text"] = maskData(v["#text"]);
-                return v;
-              }
-              return v;
-            });
+          // Case 1: string
+          if (typeof val === "string") {
+            node[key] = maskData(val);
           }
-        } else {
-          maskTextNodes(node[key]);
+          // Case 2: object with #text
+          else if (val && typeof val === "object" && "#text" in val) {
+            val["#text"] = maskData(val["#text"]);
+          }
+          // Case 3: array of objects
+          else if (Array.isArray(val)) {
+            maskNodes(val);
+          }
+        } else if (Array.isArray(val)) {
+          maskNodes(val);
+        } else if (val && typeof val === "object") {
+          maskNodes([val]);
         }
       }
-    }
+    });
   }
-  maskTextNodes(json);
 
-  // Build new XML
+  maskNodes(json);
+
+  // const builder = new XMLBuilder({ ignoreAttributes: false, preserveOrder: true, format: false });
   const builder = new XMLBuilder({
     ignoreAttributes: false,
     preserveOrder: true,
-    format: false, // no pretty print, keep original
+    format: false,
+    suppressEmptyNode: true,
   });
   const maskedXml = builder.build(json);
 
-  // Replace docx internal XML
-  zip.file("word/document.xml", maskedXml);
+  // Replace XML in ZIP
+  zip.file("word/document.xml", Buffer.from(maskedXml, "utf8"));
 
-  // Generate final DOCX buffer
-  return zip.generate({
-    type: "nodebuffer",
-    compression: "DEFLATE",
-    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  });
+  // Return modified DOCX
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" });
 }
+
 /** XLSX masking */
 export async function maskXLSX(buffer: Buffer): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
@@ -269,12 +268,13 @@ export async function maskXLSX(buffer: Buffer): Promise<Buffer> {
   reportService.addFileCount("xlsx", 1);
   return Buffer.from(arrayBuffer);
 }
-
-/** Detect file type and route to correct masking handler */
 export async function maskFileFromBuffer(buffer: Buffer, mime: string): Promise<Buffer> {
-  const detected = await fileTypeFromBuffer(buffer);
+  // Ensure buffer is treated safely
+  const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const detected = await fileTypeFromBuffer(Buffer.from(data));
   const type = detected?.mime || mime;
   console.log("📦 Masking MIME:", type);
+
   if (type.includes("pdf")) return await maskPDF(buffer);
   if (type.includes("wordprocessingml")) return await maskDOCX(buffer);
   if (type.includes("spreadsheetml") || type.includes("excel")) return await maskXLSX(buffer);
