@@ -8,6 +8,9 @@ import ExcelJS from "exceljs";
 import path from "path";
 import { reportService } from "./reportService";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import PizZip from "pizzip";
+import Docxtemplater from "docxtemplater";
+import { XMLBuilder, XMLParser } from "fast-xml-parser";
 
 // 🔹 Full mask (same as C# IsFullMask true)
 function maskFull(value: string, maskWith: string = "*"): string {
@@ -29,9 +32,9 @@ export function mask(input: string, isFullMask: boolean = false, maskWith: strin
 
 export function maskData(input: string, rule?: RegexMaskRules): string {
   if (!input) return input;
-
   let masked = input;
 
+  // console.log("🔒 masked :", masked);
   // 🟢 Apply single custom rule if provided
   if (rule) {
     const regex = new RegExp(rule.pattern || "", "gi");
@@ -53,6 +56,7 @@ export function maskData(input: string, rule?: RegexMaskRules): string {
       for (const r of rules) {
         const regex = new RegExp(r.pattern || "", "gi");
         masked = masked.replace(regex, (match) => {
+          // console.log("🔒 match text :", match, " with rule:", r?.name);
           reportService.addRuleResult({
             name: r?.name || "Unknown",
             pattern: r?.pattern?.toString() || "Unknown",
@@ -60,12 +64,11 @@ export function maskData(input: string, rule?: RegexMaskRules): string {
             isMask: true,
             isEncrypt: false,
           });
-          return r.isFullMask ? maskFull(match, r.maskWith) : partialMask(match);
+          const newText = r.isFullMask ? maskFull(match, r.maskWith) : partialMask(match);
+          // console.log("🔒 masked text :", newText);
+          return newText;
         });
       }
-    } else {
-      // 🟡 Default simple mask if no rules exist
-      masked = input.replace(/\w/g, "*");
     }
   }
 
@@ -153,6 +156,7 @@ export async function maskPDF(buffer: Buffer): Promise<Buffer> {
   const pages = pdfDoc.getPages();
 
   for (const match of matchesToMask) {
+    // console.log("🔒 match PDF text :", JSON.stringify(match, null, 2));
     const page = pages[match.page];
     page.drawRectangle({
       x: match.approxX - 2,
@@ -181,10 +185,66 @@ export async function maskPDF(buffer: Buffer): Promise<Buffer> {
 
 /** DOCX masking */
 export async function maskDOCX(buffer: Buffer): Promise<Buffer> {
-  const result = await mammoth.extractRawText({ buffer });
-  const masked = maskData(result.value);
-  reportService.addFileCount("docx", 1);
-  return Buffer.from(masked, "utf8");
+  const zip = new PizZip(buffer);
+  const xmlFile = zip.file("word/document.xml")?.asText();
+
+  if (!xmlFile) {
+    console.warn("⚠️ document.xml not found in DOCX");
+    return buffer;
+  }
+
+  // Setup parser for order preservation and attributes
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    preserveOrder: true,
+  });
+  const json = parser.parse(xmlFile);
+
+  // Recursive mask
+  function maskTextNodes(node: any) {
+    if (Array.isArray(node)) {
+      node.forEach(maskTextNodes);
+    } else if (node && typeof node === "object") {
+      for (const key of Object.keys(node)) {
+        if (key === "w:t") {
+          // <w:t>Text</w:t> or <w:t>{#text:'Text'}</w:t>
+          if (typeof node[key] === "string") {
+            node[key] = maskData(node[key]);
+          } else if (Array.isArray(node[key])) {
+            node[key] = node[key].map((v) => {
+              if (typeof v === "string") return maskData(v);
+              if (v && typeof v["#text"] === "string") {
+                v["#text"] = maskData(v["#text"]);
+                return v;
+              }
+              return v;
+            });
+          }
+        } else {
+          maskTextNodes(node[key]);
+        }
+      }
+    }
+  }
+  maskTextNodes(json);
+
+  // Build new XML
+  const builder = new XMLBuilder({
+    ignoreAttributes: false,
+    preserveOrder: true,
+    format: false, // no pretty print, keep original
+  });
+  const maskedXml = builder.build(json);
+
+  // Replace docx internal XML
+  zip.file("word/document.xml", maskedXml);
+
+  // Generate final DOCX buffer
+  return zip.generate({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
 }
 /** XLSX masking */
 export async function maskXLSX(buffer: Buffer): Promise<Buffer> {
@@ -214,7 +274,7 @@ export async function maskXLSX(buffer: Buffer): Promise<Buffer> {
 export async function maskFileFromBuffer(buffer: Buffer, mime: string): Promise<Buffer> {
   const detected = await fileTypeFromBuffer(buffer);
   const type = detected?.mime || mime;
-
+  console.log("📦 Masking MIME:", type);
   if (type.includes("pdf")) return await maskPDF(buffer);
   if (type.includes("wordprocessingml")) return await maskDOCX(buffer);
   if (type.includes("spreadsheetml") || type.includes("excel")) return await maskXLSX(buffer);

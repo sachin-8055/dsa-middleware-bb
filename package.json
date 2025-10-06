@@ -39,12 +39,15 @@
   },
   "dependencies": {
     "axios": "^1.7.7",
+    "docxtemplater": "^3.66.5",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "fast-xml-parser": "^5.3.0",
     "file-type": "^21.0.0",
     "mammoth": "^1.11.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.296",
+    "pizzip": "^3.2.0",
     "tslib": "^2.8.1"
   },
   "peerDependencies": {

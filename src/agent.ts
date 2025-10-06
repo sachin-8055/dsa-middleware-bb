@@ -7,18 +7,23 @@ import { authSync, scheduleReAuth } from "./api/authenticate";
 import { registerUserWithAgentAsync } from "./api/regUserWithAgent";
 import { fileTypeFromBuffer } from "file-type";
 import { maskData, maskFileFromBuffer } from "./utils/masking";
-// import fileType from "file-type";
+import * as fs from "fs";
+import path from "path";
 
 let isAgentReady = false;
-
+const IGNORE_PATHS = [
+  ".well-known/appspecific", // Chrome DevTools probe
+  "favicon.ico", // browser favicon request
+  "robots.txt", // crawler file
+  "manifest.json", // web manifest
+  "service-worker.js", // PWA files
+  "sitemap.xml", // optional
+];
 export function dsaMiddleware(config: InitConfig) {
   Object.assign(configStore, config);
   SystemIdentityService.updateSystemIdentityInfo();
 
-  // console.log("Device info:", deviceStore.toJson(true));
-  // console.log("Config :", configStore.toJson(true));
-
-  // Agent init
+  // Agent initialization
   (async () => {
     try {
       const registered = await registerUserWithAgentAsync();
@@ -40,79 +45,93 @@ export function dsaMiddleware(config: InitConfig) {
       console.error("❌ Agent initialization failed:", err);
     }
   })();
+
   return function (req: Request, res: Response, next: NextFunction) {
-    console.log("🟢 Incoming Request:", req.method, req.originalUrl);
+    // Ignore specific paths
+    if (IGNORE_PATHS.some((p) => req.originalUrl.includes(p))) {
+      return next();
+    }
+
+    console.log("🟢 Processing Request...", req.originalUrl);
 
     const originalWrite = res.write.bind(res);
     const originalEnd = res.end.bind(res);
 
     const chunks: Buffer[] = [];
 
-    // --- Capture chunks
-    res.write = ((chunk: any, encoding?: BufferEncoding, cb?: (error?: Error) => void): boolean => {
+    // Capture response chunks
+    res.write = ((chunk: any, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      if (cb) cb(null);
       return true;
-    }) as any; // ✅ type cast back to avoid overload mismatch
+    }) as any;
 
-    // --- Override res.end safely
     res.end = ((chunk?: any, encoding?: BufferEncoding, cb?: () => void): Response => {
       if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
       const buffer = Buffer.concat(chunks);
-      let contentType = res.getHeader("content-type")?.toString() || "";
 
       (async () => {
         try {
           if (!isAgentReady) {
-            console.log("⚪ Agent not ready — skipping modification.");
+            // Agent not ready, pass data unchanged
             originalWrite(buffer);
             return originalEnd(cb);
           }
 
-          const detected = await fileTypeFromBuffer(buffer);
-          let mime = detected?.mime || contentType || "application/octet-stream";
-          if (detected?.mime) mime = detected.mime;
+          let finalBuffer: any = buffer;
+          let mime = res.getHeader("content-type")?.toString() || "application/octet-stream";
 
-          if (contentType.includes("text/csv")) mime = "text/plain";
+          // Try to resolve static file path
+          const possiblePath = path.join(process.cwd(), req.originalUrl);
+          const fileExists = fs.existsSync(possiblePath) && fs.statSync(possiblePath).isFile();
 
-          // Fallback by file extension if still unknown or generic
-          if (!mime || mime === "application/octet-stream") {
-            if (req.url.endsWith(".txt")) mime = "text/plain";
-            if (req.url.endsWith(".log")) mime = "text/plain";
-            if (req.url.endsWith(".csv")) mime = "text/plain";
-            if (req.url.endsWith(".pdf")) mime = "application/pdf";
-            if (req.url.endsWith(".docx"))
-              mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-            if (req.url.endsWith(".xlsx")) mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          if ((buffer.length === 0 || fileExists) && fileExists) {
+            // Read static file once
+            finalBuffer = fs.readFileSync(possiblePath);
+            const detected = await fileTypeFromBuffer(finalBuffer);
+            mime = detected?.mime || mime;
+            console.log("📦before buffer length :", finalBuffer.length);
+
+            // Apply masking
+            finalBuffer = await maskFileFromBuffer(finalBuffer, mime);
+            console.log("after buffer length :", finalBuffer.length);
+          } else if (buffer.length > 0) {
+            // Dynamic response: detect MIME
+            const detected = await fileTypeFromBuffer(finalBuffer);
+            mime = detected?.mime || mime;
+
+            // Fallback by URL extension
+            if (!mime || mime === "application/octet-stream") {
+              if (req.originalUrl.endsWith(".pdf")) mime = "application/pdf";
+              else if (req.originalUrl.endsWith(".docx"))
+                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+              else if (req.originalUrl.endsWith(".xlsx"))
+                mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+              else if (req.originalUrl.endsWith(".txt")) mime = "text/plain";
+            }
+
+            // Mask dynamic content if applicable
+            if (
+              mime.includes("application/pdf") ||
+              mime.includes("officedocument.wordprocessingml.document") ||
+              mime.includes("spreadsheetml.sheet") ||
+              mime.includes("application/vnd.ms-excel")
+            ) {
+              // Binary file masking
+              finalBuffer = await maskFileFromBuffer(finalBuffer, mime);
+            } else if (mime.startsWith("text/") || mime.includes("application/json")) {
+              // Text or JSON masking
+              const text = finalBuffer.toString("utf8");
+              const masked = maskData(text);
+              finalBuffer = Buffer.from(masked, "utf8");
+            }
           }
 
-          console.log("📦 Detected Content-Type:", mime);
-
-          if (mime.includes("application/json")) {
-            const text = buffer.toString("utf8");
-            const masked = maskData(text);
-            res.setHeader("content-length", Buffer.byteLength(masked));
-            originalWrite(masked);
-          } else if (mime.includes("text/plain") || mime.includes("text/csv")) {
-            const maskedBuffer = await maskFileFromBuffer(buffer, "text/plain");
-            // const maskedBuffer = maskData(buffer.toString("utf8"));
-            res.setHeader("content-length", maskedBuffer.length);
-            res.setHeader("content-type", mime);
-            originalWrite(maskedBuffer);
-          } else if (
-            mime.includes("application/pdf") ||
-            mime.includes("officedocument.wordprocessingml.document") ||
-            mime.includes("application/vnd.ms-excel") ||
-            mime.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-          ) {
-            const maskedBuffer = await maskFileFromBuffer(buffer, mime);
-            // const maskedBuffer = maskData(buffer.toString("utf8"));
-            res.setHeader("content-length", maskedBuffer.length);
-            res.setHeader("content-type", mime);
-            originalWrite(maskedBuffer);
-          } else {
-            console.log("⚪ Unsupported type, passing as-is.");
-            originalWrite(buffer);
-          }
+          // Send masked data
+          res.removeHeader("content-encoding"); // prevent broken files
+          res.setHeader("Content-Type", mime);
+          res.setHeader("Content-Length", finalBuffer.length);
+          originalWrite(finalBuffer);
         } catch (err) {
           console.error("❌ Error modifying response:", err);
           originalWrite(buffer);
@@ -122,7 +141,7 @@ export function dsaMiddleware(config: InitConfig) {
       })();
 
       return res;
-    }) as any; // ✅ type cast fixes TS overload error
+    }) as any;
 
     next();
   };
