@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { DeviceDetails } from "../types/DeviceDetails";
-import { DeviceStore } from "../store/deviceStore";
+import { deviceStore } from "../store/deviceStore";
 
 export class SystemIdentityService {
   private static persistPath: string =
@@ -15,7 +15,7 @@ export class SystemIdentityService {
    * Update the system identity and store it inside DeviceStore
    */
   static updateSystemIdentityInfo(): DeviceDetails {
-    const store = new DeviceStore();
+    const store = deviceStore;
     const info: DeviceDetails = {
       platform: this.getPlatform(),
       architecture: os.arch(),

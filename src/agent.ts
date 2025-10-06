@@ -1,81 +1,128 @@
 import { Request, Response, NextFunction } from "express";
 import { InitConfig } from "./types/InitConfig";
-import { ConfigStore } from "./store/configStore";
-import { SystemIdentityService } from "./utils/systemIdentityService";
-import { DeviceStore } from "./store/deviceStore";
+import { configStore } from "./store/configStore";
+import { deviceStore } from "./store/deviceStore";
+import { SystemIdentityService } from "./utils/SystemIdentityService";
+import { authSync, scheduleReAuth } from "./api/authenticate";
+import { registerUserWithAgentAsync } from "./api/regUserWithAgent";
+import { fileTypeFromBuffer } from "file-type";
+import { maskData, maskFileFromBuffer } from "./utils/masking";
+// import fileType from "file-type";
+
+let isAgentReady = false;
 
 export function dsaMiddleware(config: InitConfig) {
-  const configStore = new ConfigStore();
   Object.assign(configStore, config);
-
   SystemIdentityService.updateSystemIdentityInfo();
 
-  const deviceStore = new DeviceStore();
+  // console.log("Device info:", deviceStore.toJson(true));
+  // console.log("Config :", configStore.toJson(true));
 
-  console.log("Device info:", deviceStore.toJson(true));
-
-  return function (req: Request, res: Response, next: NextFunction) {
-    // Log incoming request
-    console.log("🟢 Incoming Request:", {
-      method: req.method,
-      url: req.originalUrl,
-      headers: req.headers,
-      body: req.body,
-    });
-
-    // Capture original send
-    const originalSend = res.send.bind(res);
-
-    res.send = (body?: any): Response => {
-      // Detect response type
-      let contentType = res.getHeader("content-type")?.toString() || "unknown";
-
-      let detectedType = "unknown";
-
-      if (contentType.includes("application/json")) {
-        detectedType = "JSON";
-      } else if (contentType.includes("text/plain")) {
-        detectedType = "Text";
-      } else if (contentType.includes("text/xml") || contentType.includes("application/xml")) {
-        detectedType = "XML";
-      } else if (
-        contentType.includes("application/pdf") ||
-        contentType.includes("application/msword") ||
-        contentType.includes("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-      ) {
-        detectedType = "Document (Word/PDF)";
-      } else if (
-        contentType.includes("application/vnd.ms-excel") ||
-        contentType.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
-        contentType.includes("text/csv")
-      ) {
-        detectedType = "Spreadsheet/CSV";
-      } else if (contentType.includes("text/html")) {
-        detectedType = "HTML";
-      } else if (typeof body === "string" && contentType === "unknown") {
-        // fallback: guess text if string
-        detectedType = "Text";
-      } else if (typeof body === "object" && contentType === "unknown") {
-        // fallback: guess JSON if object
-        detectedType = "JSON (guessed)";
+  // Agent init
+  (async () => {
+    try {
+      const registered = await registerUserWithAgentAsync();
+      if (!registered) {
+        console.warn("⚠️ Unable to register User with this Agent. Middleware will pass data unchanged.");
+        return;
       }
 
-      console.log("🔵 Outgoing Response:", {
-        statusCode: res.statusCode,
-        detectedType,
-        contentType,
-        preview:
-          typeof body === "string"
-            ? body.slice(0, 100) // log first 100 chars only
-            : body,
-      });
+      const authenticated = await authSync();
+      if (!authenticated) {
+        console.warn("⚠️ Unable to authenticate Agent. Middleware will pass data unchanged.");
+        return;
+      }
 
-      return originalSend(body);
-    };
-
-    if (config.debug) {
-      console.log("⚙️ Middleware initialized with config:", config);
+      console.log("✅ Agent registration and authentication successful.");
+      isAgentReady = true;
+      scheduleReAuth();
+    } catch (err) {
+      console.error("❌ Agent initialization failed:", err);
     }
+  })();
+  return function (req: Request, res: Response, next: NextFunction) {
+    console.log("🟢 Incoming Request:", req.method, req.originalUrl);
+
+    const originalWrite = res.write.bind(res);
+    const originalEnd = res.end.bind(res);
+
+    const chunks: Buffer[] = [];
+
+    // --- Capture chunks
+    res.write = ((chunk: any, encoding?: BufferEncoding, cb?: (error?: Error) => void): boolean => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      return true;
+    }) as any; // ✅ type cast back to avoid overload mismatch
+
+    // --- Override res.end safely
+    res.end = ((chunk?: any, encoding?: BufferEncoding, cb?: () => void): Response => {
+      if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      const buffer = Buffer.concat(chunks);
+      let contentType = res.getHeader("content-type")?.toString() || "";
+
+      (async () => {
+        try {
+          if (!isAgentReady) {
+            console.log("⚪ Agent not ready — skipping modification.");
+            originalWrite(buffer);
+            return originalEnd(cb);
+          }
+
+          const detected = await fileTypeFromBuffer(buffer);
+          let mime = detected?.mime || contentType || "application/octet-stream";
+          if (detected?.mime) mime = detected.mime;
+
+          if (contentType.includes("text/csv")) mime = "text/plain";
+
+          // Fallback by file extension if still unknown or generic
+          if (!mime || mime === "application/octet-stream") {
+            if (req.url.endsWith(".txt")) mime = "text/plain";
+            if (req.url.endsWith(".log")) mime = "text/plain";
+            if (req.url.endsWith(".csv")) mime = "text/plain";
+            if (req.url.endsWith(".pdf")) mime = "application/pdf";
+            if (req.url.endsWith(".docx"))
+              mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            if (req.url.endsWith(".xlsx")) mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          }
+
+          console.log("📦 Detected Content-Type:", mime);
+
+          if (mime.includes("application/json")) {
+            const text = buffer.toString("utf8");
+            const masked = maskData(text);
+            res.setHeader("content-length", Buffer.byteLength(masked));
+            originalWrite(masked);
+          } else if (mime.includes("text/plain") || mime.includes("text/csv")) {
+            const maskedBuffer = await maskFileFromBuffer(buffer, "text/plain");
+            // const maskedBuffer = maskData(buffer.toString("utf8"));
+            res.setHeader("content-length", maskedBuffer.length);
+            res.setHeader("content-type", mime);
+            originalWrite(maskedBuffer);
+          } else if (
+            mime.includes("application/pdf") ||
+            mime.includes("officedocument.wordprocessingml.document") ||
+            mime.includes("application/vnd.ms-excel") ||
+            mime.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+          ) {
+            const maskedBuffer = await maskFileFromBuffer(buffer, mime);
+            // const maskedBuffer = maskData(buffer.toString("utf8"));
+            res.setHeader("content-length", maskedBuffer.length);
+            res.setHeader("content-type", mime);
+            originalWrite(maskedBuffer);
+          } else {
+            console.log("⚪ Unsupported type, passing as-is.");
+            originalWrite(buffer);
+          }
+        } catch (err) {
+          console.error("❌ Error modifying response:", err);
+          originalWrite(buffer);
+        }
+
+        originalEnd(cb);
+      })();
+
+      return res;
+    }) as any; // ✅ type cast fixes TS overload error
 
     next();
   };

@@ -1,15 +1,5 @@
-// src/store/AgentStore.ts
-export interface Agent {
-  agentId: string;
-  status: number;
-  configurations?: Record<string, any>;
-}
-
-export interface IAgentStore {
-  agent?: Agent;
-}
-
-export class AgentStore implements IAgentStore {
+import { Agent } from "../types/Agent";
+class AgentStore {
   agent?: Agent;
 
   toJson(indented = false): string {
@@ -17,3 +7,6 @@ export class AgentStore implements IAgentStore {
   }
 }
 
+
+// ✅ Export one global instance
+export const agentStore = new AgentStore();

@@ -10,8 +10,8 @@ export interface RuleReport {
   matchCount: number;
   isMask: boolean;
   isEncrypt: boolean;
-  error: string;
-  lastProcessed: string;   // ISO Date string
+  error?: string;
+  lastProcessed?: string;   // ISO Date string
 }
 
 export interface FileReport {
@@ -23,9 +23,9 @@ export interface FileReport {
 export interface OperationReport {
   agentId: string;
   type: string;
-  platform: string;
+  platform: string | undefined;
   accountId: string;
-  deviceId: string;
+  deviceId: string  | undefined;
   sync: SyncEntry[];
   rules: RuleReport[];
   files: FileReport[];

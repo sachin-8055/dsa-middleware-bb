@@ -1,28 +1,16 @@
-
+// configStore.ts
 const DEFAULT_SERVER_BASE_URL = "https://access.axiomprotect.com:6653";
 
-interface IConfigStore {
-  isRegistered: boolean;
-  accountId: string;
-  agentId: string;
-  agentType: string;
-  serverBaseUrl?: string;
-  userName: string;
-  password: string;
-  userEmail?: string;
-  userMobile?: string;
-}
-
-export class ConfigStore implements IConfigStore {
+class ConfigStore {
   isRegistered = false;
   accountId = "";
   agentId = "";
   agentType = "middleware_agent";
   serverBaseUrl?: string = DEFAULT_SERVER_BASE_URL;
-  userName = "";
+  name = "";
   password = "";
-  userEmail?: string;
-  userMobile?: string;
+  email?: string;
+  mobile?: string;
 
   constructor(_serverBaseUrl?: string) {
     this.serverBaseUrl = _serverBaseUrl ?? DEFAULT_SERVER_BASE_URL;
@@ -32,3 +20,6 @@ export class ConfigStore implements IConfigStore {
     return JSON.stringify(this, null, indented ? 2 : 0);
   }
 }
+
+// ✅ Export one global instance
+export const configStore = new ConfigStore();

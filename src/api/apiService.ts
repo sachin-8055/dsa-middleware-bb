@@ -1,27 +1,25 @@
 import axios, { AxiosInstance, AxiosRequestConfig, Method } from "axios";
 import { ApiResponse } from "../types/ApiResponse";
-import { ConfigStore } from "../store/configStore";
+import { configStore } from "../store/configStore";
 
 export class HttpRequestService {
   private httpClient: AxiosInstance;
-  private configStore: ConfigStore;
-  constructor(configStore: ConfigStore) {
-    this.configStore = configStore;
+  constructor() {
     this.httpClient = axios.create();
   }
 
   private buildUrl(url: string): string {
-    if (!this.configStore.serverBaseUrl) {
+    if (!configStore.serverBaseUrl) {
       throw new Error("ApiBaseUrl is not configured.");
     }
-    if (!this.configStore.agentId) {
+    if (!configStore.agentId) {
       throw new Error("Agent ID is not configured.");
     }
 
-    const baseUrl = this.configStore.serverBaseUrl.replace(/\/+$/, "");
+    const baseUrl = configStore.serverBaseUrl.replace(/\/+$/, "");
     const fullPath = `${baseUrl}/AxiomProtect/v1/dsagent/${url.replace(/^\/+/, "")}`;
 
-    const requestTime = new Date().toISOString(); // similar to UTC timestamp
+    const requestTime = new Date().toISOString().replace("T", " ").replace("Z", "");
     return `${fullPath}?requestTime=${encodeURIComponent(requestTime)}`;
   }
 
@@ -35,31 +33,41 @@ export class HttpRequestService {
         const data = err.response.data;
 
         switch (status) {
-          case 401: throw new Error(`401 Unauthorized: ${JSON.stringify(data)}`);
-          case 403: throw new Error(`403 Forbidden: ${JSON.stringify(data)}`);
-          case 404: throw new Error(`404 Not Found: ${JSON.stringify(data)}`);
-          case 500: throw new Error(`500 Internal Server Error: ${JSON.stringify(data)}`);
-          default: throw new Error(`${status} Error: ${JSON.stringify(data)}`);
+          case 401:
+            throw new Error(`401 Unauthorized: ${JSON.stringify(data)}`);
+          case 403:
+            throw new Error(`403 Forbidden: ${JSON.stringify(data)}`);
+          case 404:
+            throw new Error(`404 Not Found: ${JSON.stringify(data)}`);
+          case 500:
+            throw new Error(`500 Internal Server Error: ${JSON.stringify(data)}`);
+          default:
+            throw new Error(`${status} Error: ${JSON.stringify(data)}`);
         }
       }
       throw err;
     }
   }
 
-  // async putAsync<T>(url: string, body: any, addToken: boolean = false, headers: Record<string, string> = {}): Promise<ApiResponse<T>> {
-  //   const fullUrl = this.buildUrl(url);
+  async postAsync<T>(
+    url: string,
+    body: any,
+    addToken: boolean = false,
+    headers: Record<string, string> = {}
+  ): Promise<ApiResponse<T>> {
+    const fullUrl = this.buildUrl(url);
+    // console.log("POST URL:", fullUrl);
+    // console.log("POST Body:", body);
+    if (addToken) {
+      const tokenRes = await this.postTokenAsync<{ jwt: string }>();
+      // console.log("Token response:", tokenRes);
+      if (tokenRes.resultCode === 0 && tokenRes.resultData?.jwt) {
+        headers["authToken"] = tokenRes.resultData.jwt;
+      }
+    }
 
-  //   if (addToken) {
-  //     const tokenRes = await this.postTokenAsync<{ jwt: string }>();
-  //     if (tokenRes.resultCode === 0 && tokenRes.resultData?.jwt) {
-  //       headers["authToken"] = tokenRes.resultData.jwt;
-  //     }
-  //   }
-
-  //   return this.handleApiResponse<T>(
-  //     this.httpClient.put(fullUrl, body, { headers })
-  //   );
-  // }
+    return this.handleApiResponse<T>(this.httpClient.post(fullUrl, body, { headers }));
+  }
 
   // async deleteAsync<T>(url: string, addToken: boolean = false, headers: Record<string, string> = {}): Promise<ApiResponse<T>> {
   //   const fullUrl = this.buildUrl(url);
@@ -76,7 +84,12 @@ export class HttpRequestService {
   //   );
   // }
 
-  async customCall(method: Method, url: string, addToken: boolean = false, headers: Record<string, string> = {}): Promise<any> {
+  async customCall(
+    method: Method,
+    url: string,
+    addToken: boolean = false,
+    headers: Record<string, string> = {}
+  ): Promise<any> {
     const fullUrl = this.buildUrl(url);
 
     if (addToken) {
@@ -89,7 +102,7 @@ export class HttpRequestService {
     const response = await this.httpClient.request({
       method,
       url: fullUrl,
-      headers
+      headers,
     });
 
     return response.data;
@@ -99,14 +112,17 @@ export class HttpRequestService {
     const fullUrl = this.buildUrl("getAuthenticationToken");
 
     const body = {
-      accountId: this.configStore.accountId,
-      email: this.configStore.userEmail,
-      password: this.configStore.password
+      accountId: configStore.accountId,
+      email: configStore.email,
+      password: configStore.password,
     };
+
+    // console.log("POST URL:", fullUrl);
+    // console.log("POST Body:", body);
 
     return this.handleApiResponse<T>(
       this.httpClient.post(fullUrl, body, {
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
       })
     );
   }
