@@ -6,8 +6,32 @@
 [![GitHub issues](https://img.shields.io/github/issues/sachin-8055/dsa-middleware-bb.svg?style=flat-square)](https://github.com/sachin-8055/dsa-middleware-bb/issues)
 [![GitHub stars](https://img.shields.io/github/stars/sachin-8055/dsa-middleware-bb.svg?style=flat-square)](https://github.com/sachin-8055/dsa-middleware-bb)
 
-A lightweight and secure middleware for integrating **Digital Smart Agent (DSA)** capabilities into your **Node.js** or **NestJS** applications.  
-It handles automatic authentication, request validation, and agent-level configurations seamlessly.
+A lightweight and secure middleware for integrating **Data Security Agent (DSA)** capabilities into your **Node.js** or **NestJS** applications.
+
+DSA (Data Security Agent) is a lightweight, plug-and-play middleware designed to automatically protect sensitive data in your API responses and files before they leave your server.
+
+It intelligently scans and masks sensitive information such as emails, phone numbers, credit card details, and personal identifiers based on your configured agent rules — ensuring data privacy and compliance without changing your application logic.
+
+## 🔒 Key Features
+
+- 🧩 Universal Middleware — works with Express, NestJS, and other Node.js frameworks.
+- ⚙️ Plug-and-Play Setup — integrate in seconds with a single app.use() call.
+- 🧠 Smart Detection Engine — masks sensitive information dynamically before sending a response.
+- 📄 Supports Multiple Formats — compatible with JSON, XML, and even DOCX files.
+- 🧾 Custom Rules — define your own masking logic per agent/account for flexible security policies.
+
+## 🧰 Use Cases
+
+- ✅ Mask personal data (email, phone, card numbers) before returning API responses.
+- ✅ Sanitize downloadable files like .docx or .xml automatically.
+- ✅ Enforce organization-wide data security rules centrally.
+
+## 🧱 How It Works
+
+- The middleware intercepts every HTTP response before it’s sent to the client.
+- It scans response bodies or file buffers for sensitive data patterns.
+- Matches are masked or replaced according to your DSA agent configuration.
+- The cleaned, privacy-safe data is then delivered to the end user.
 
 ---
 
@@ -45,8 +69,6 @@ app.get("/", (req, res) => {
 
 app.listen(3000, () => console.log("Server running on http://localhost:3000"));
 ```
-
-✅ That’s it! The middleware will automatically handle authentication and enrich incoming requests with DSA session context.
 
 ---
 
@@ -102,27 +124,19 @@ bootstrap();
 
 Once applied, `dsaMiddleware` will:
 
-- Authenticate and cache the DSA session for each agent
-- Attach session context to each incoming request (`req.dsa` or `req.agent`)
-- Optionally log internal actions if `debug: true` is set
-
-Example:
-
-```js
-app.get("/info", (req, res) => {
-  console.log(req.dsa); // { accountId, agentId, sessionToken, ... }
-  res.json({ message: "Agent context active", dsa: req.dsa });
-});
-```
+- Secure and hide sesitive information in each response.
+- Information like Card numbers, Mobile numbers, emails, etc.
+- Everything is masked based on defined rules.
 
 ---
 
 ## 🧩 Example Output (Debug Mode)
 
 ```
-🔑 Authenticating Agent...
-✅ Agent authenticated: agent_12345
-📦 Session initialized for account acc_abcde
+✅ Agent registration and authentication successful
+ > Scheduling Re-Authentication
+ > Re-Authentication Scheduled every 3 minutes
+ > Report Sync Scheduled every 1 minutes
 ```
 
 ---
