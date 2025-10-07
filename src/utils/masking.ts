@@ -143,6 +143,14 @@ export async function maskPDF(buffer: Buffer): Promise<Buffer> {
           approxX: approxStartX,
           approxWidth: (pos.width * matchedChars) / totalChars,
         });
+
+        reportService.addRuleResult({
+          name: rule?.name || "Unknown",
+          pattern: rule?.pattern?.toString() || "Unknown",
+          matchCount: 1,
+          isMask: true,
+          isEncrypt: false,
+        });
       }
     }
   }
@@ -199,32 +207,43 @@ export async function maskDOCX(buffer: Buffer): Promise<Buffer> {
 
   // Recursive mask function
   function maskNodes(nodes: any[]): void {
-    nodes.forEach((node) => {
-      if (!node || typeof node !== "object") return;
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
 
       for (const key of Object.keys(node)) {
         const val = node[key];
 
         if (key === "w:t") {
-          // Case 1: string
+          // Case 1: plain string text node
           if (typeof val === "string") {
             node[key] = maskData(val);
           }
-          // Case 2: object with #text
-          else if (val && typeof val === "object" && "#text" in val) {
-            val["#text"] = maskData(val["#text"]);
-          }
-          // Case 3: array of objects
+          // Case 2: <w:t> containing an array of { "#text": "..." }
           else if (Array.isArray(val)) {
-            maskNodes(val);
+            for (const item of val) {
+              if (item && typeof item["#text"] === "string") {
+                const before = item["#text"];
+                const after = maskData(before);
+                item["#text"] = after;
+              }
+            }
           }
-        } else if (Array.isArray(val)) {
+          // Case 3: object form <w:t><#text>...</#text></w:t>
+          else if (val && typeof val === "object" && "#text" in val) {
+            const before = val["#text"];
+            const after = maskData(before);
+            val["#text"] = after;
+          }
+        }
+
+        // Recurse into arrays or objects
+        if (Array.isArray(val)) {
           maskNodes(val);
         } else if (val && typeof val === "object") {
           maskNodes([val]);
         }
       }
-    });
+    }
   }
 
   maskNodes(json);
@@ -240,6 +259,8 @@ export async function maskDOCX(buffer: Buffer): Promise<Buffer> {
 
   // Replace XML in ZIP
   zip.file("word/document.xml", Buffer.from(maskedXml, "utf8"));
+
+  reportService.addFileCount("docx", 1);
 
   // Return modified DOCX
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" });
@@ -273,7 +294,7 @@ export async function maskFileFromBuffer(buffer: Buffer, mime: string): Promise<
   const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   const detected = await fileTypeFromBuffer(Buffer.from(data));
   const type = detected?.mime || mime;
-  console.log("📦 Masking MIME:", type);
+  // console.log("📦 Masking MIME:", type);
 
   if (type.includes("pdf")) return await maskPDF(buffer);
   if (type.includes("wordprocessingml")) return await maskDOCX(buffer);
@@ -281,6 +302,8 @@ export async function maskFileFromBuffer(buffer: Buffer, mime: string): Promise<
 
   if (type.includes("text") || type.includes("csv")) {
     const masked = maskData(buffer.toString("utf8"));
+
+    reportService.addFileCount(type, 1);
     return Buffer.from(masked, "utf8");
   }
 

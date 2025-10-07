@@ -75,6 +75,7 @@ export function dsaMiddleware(config: InitConfig) {
           const staticPath = path.join(process.cwd(), req.originalUrl);
           const fileExists = fs.existsSync(staticPath) && fs.statSync(staticPath).isFile();
 
+          // console.log("1",{mime})
           // Load static file if exists
           if ((finalBuffer.length === 0 || fileExists) && fileExists) {
             finalBuffer = fs.readFileSync(staticPath);
@@ -93,6 +94,7 @@ export function dsaMiddleware(config: InitConfig) {
             else if (ext === "txt") mime = "text/plain";
           }
 
+          // console.log({mime})
           // Masking logic
           const isMaskable =
             mime.includes("application/pdf") ||
@@ -102,7 +104,7 @@ export function dsaMiddleware(config: InitConfig) {
 
           if (isMaskable && isSupportedFile(req.originalUrl)) {
             finalBuffer = Buffer.from(await maskFileFromBuffer(finalBuffer, mime));
-          } else if (mime.startsWith("text/") || mime.includes("application/json")) {
+          } else if (mime.startsWith("text/") || mime.includes("application/json")|| mime.includes("application/xml")) {
             finalBuffer = Buffer.from(maskData(finalBuffer.toString("utf8")), "utf8");
           }
 

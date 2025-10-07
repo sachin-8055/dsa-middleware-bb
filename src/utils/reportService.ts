@@ -43,7 +43,7 @@ async function saveReport(): Promise<void> {
   }
 
   report.reportOn = new Date().toISOString();
-
+// console.log("SAVING RPT:::")
   const json = JSON.stringify(report, null, 2);
   try {
     await fs.writeFile(reportFilePath, json, "utf-8");
@@ -69,7 +69,9 @@ export const reportService = {
   },
 
   addRuleResult(rule: RuleReport) {
+    // console.log("Add Rule Called ...")
     const existing = report.rules.find((r) => r.name === rule.name);
+    // console.log({existing})
     if (existing) {
       existing.matchCount += rule.matchCount;
       existing.lastProcessed = new Date().toISOString();
@@ -78,6 +80,8 @@ export const reportService = {
       rule.lastProcessed = new Date().toISOString();
       report.rules.push(rule);
     }
+    
+    // console.log({rule})
     void saveReport();
   },
 
