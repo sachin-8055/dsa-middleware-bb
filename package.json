@@ -1,6 +1,6 @@
 {
   "name": "dsa-middleware-bb",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "CommonJs + TypeScript SDK for Data Security Agent Middleware.",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",

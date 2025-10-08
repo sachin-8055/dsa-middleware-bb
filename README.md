@@ -143,7 +143,7 @@ Once applied, `dsaMiddleware` will:
 
 ## 📦 Latest Version
 
-**Version:** `1.0.0`  
+**Version:** `0.0.1`  
 _(Always check the [npm registry](https://www.npmjs.com/package/dsa-middleware-bb) for the latest release.)_
 
 ---
